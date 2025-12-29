@@ -1,0 +1,64 @@
+@import "tailwindcss";
+
+:root {
+  /* Precision Navy Palette - Based on user attached image */
+  --background: #f0f9ff; /* Very faint blue wash */
+  --foreground: #0f2854; /* Primary Navy */
+  
+  /* Material Design 3 Navy Theme */
+  --md-primary: #1c4d8d; /* Medium Navy */
+  --md-on-primary: #ffffff;
+  --md-primary-container: #bde8f5; /* Light Sky Blue */
+  --md-on-primary-container: #0f2854;
+  --md-secondary: #4988c4; /* Soft Blue */
+  --md-surface: #ffffff;
+  --md-surface-variant: #e0f2fe;
+  --md-on-surface: #0f2854;
+  --md-on-surface-variant: #4988c4;
+  --md-outline: #bae6fd;
+  --md-error: #b3261e;
+}
+
+.dark {
+  /* Dark Mode - Deep Oceanic */
+  --background: #081226;
+  --foreground: #bde8f5;
+  
+  --md-primary: #4988c4;
+  --md-on-primary: #081226;
+  --md-primary-container: #0f2854;
+  --md-on-primary-container: #bde8f5;
+  --md-secondary: #1c4d8d;
+  --md-surface: #0f172a;
+  --md-surface-variant: #1e293b;
+  --md-on-surface: #f0f9ff;
+  --md-on-surface-variant: #bde8f5;
+  --md-outline: #334155;
+  --md-error: #f87171;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+
+  /* Navy Theme Mapping */
+  --color-md-primary: var(--md-primary);
+  --color-md-on-primary: var(--md-on-primary);
+  --color-md-primary-container: var(--md-primary-container);
+  --color-md-on-primary-container: var(--md-on-primary-container);
+  --color-md-secondary: var(--md-secondary);
+  --color-md-surface: var(--md-surface);
+  --color-md-surface-variant: var(--md-surface-variant);
+  --color-md-on-surface: var(--md-on-surface);
+  --color-md-on-surface-variant: var(--md-on-surface-variant);
+  --color-md-outline: var(--md-outline);
+  --color-md-error: var(--md-error);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
