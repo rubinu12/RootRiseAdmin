@@ -4,11 +4,8 @@ import { db, pool } from '@/lib/db';
 import { topics } from '@/lib/schema';
 import { v1, helpers } from '@google-cloud/aiplatform';
 import { revalidatePath } from 'next/cache';
-import { eq, sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 
-/**
- * AI PLATFORM CONFIGURATION
- */
 const PROJECT_ID = process.env.GOOGLE_PROJECT_ID; 
 const LOCATION = 'us-central1';
 const MODEL_NAME = 'text-embedding-004'; 
@@ -18,6 +15,11 @@ const clientOptions = { apiEndpoint: API_ENDPOINT, fallback: true };
 const predictionServiceClient = new v1.PredictionServiceClient(clientOptions);
 
 /**
+ * HELPER: Standardize slugs and paths
+ */
+const slugify = (text: string) => text.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+
+/**
  * GENERATE EMBEDDING (768 Dimensions)
  */
 async function generateEmbedding(text: string): Promise<number[]> {
@@ -25,7 +27,10 @@ async function generateEmbedding(text: string): Promise<number[]> {
   
   const endpoint = `projects/${PROJECT_ID}/locations/${LOCATION}/publishers/google/models/${MODEL_NAME}`;
   const instance = helpers.toValue({ content: text, task_type: 'RETRIEVAL_DOCUMENT' });
-  const parameters = helpers.toValue({ autoTruncate: true });
+  const parameters = helpers.toValue({ 
+    autoTruncate: true,
+    outputDimensionality: 768 // Enforced for schema compatibility
+  });
 
   const [response] = await predictionServiceClient.predict({
     endpoint,
@@ -40,99 +45,84 @@ async function generateEmbedding(text: string): Promise<number[]> {
 }
 
 /**
- * FETCH CONTEXT FOR EMBEDDING
- * Requirement: Paper -> Subject -> Anchor context for L3/L4 embeddings.
- */
-async function getContext(parentId: string) {
-  // Define an interface for the query result to fix the ts(7006) error
-  interface AncestryResult {
-    name: string;
-    level: number;
-  }
-
-  const res = await pool.query<AncestryResult>(`
-    WITH RECURSIVE ancestry AS (
-      SELECT id, name, level, primary_parent_id FROM topics WHERE id = $1
-      UNION ALL
-      SELECT t.id, t.name, t.level, t.primary_parent_id FROM topics t
-      INNER JOIN ancestry a ON a.primary_parent_id = t.id
-    )
-    SELECT name, level FROM ancestry;
-  `, [parentId]);
-
-  // Now 'r' is typed as AncestryResult instead of 'any'
-  const paper = res.rows.find((r: AncestryResult) => r.level === 1)?.name || "";
-  const subject = res.rows.find((r: AncestryResult) => r.level === 2)?.name || "";
-  const anchor = res.rows.find((r: AncestryResult) => r.level === 3)?.name || "";
-  
-  return { paper, subject, anchor };
-}
-
-/**
  * SMART BULK SEEDER
  */
 export async function smartBulkSeed(parentId: string, rawText: string) {
-  // 1. Validate Parent and Get Level
   const parentNode = await db.query.topics.findFirst({
     where: eq(topics.id, parentId)
   });
 
   if (!parentNode) throw new Error("Parent node not found.");
-  const parentLevel = parentNode.level || 0;
-  const { paper, subject, anchor } = await getContext(parentId);
+  
+  // Standardize parent path to dots for dot-notation
+  const parentPath = parentNode.ancestryPath ? parentNode.ancestryPath.toLowerCase() : "";
 
   const lines = rawText.split('\n');
   const results = { created: 0, errors: [] as string[] };
 
-  // Database Transaction
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    let activeL3Id = parentLevel === 3 ? parentId : null;
+    
+    // Tracks the most recently created L3 so L4s can be nested correctly during bulk paste
+    let activeL3Id = parentNode.level === 3 ? parentNode.id : null;
+    let activeL3Path = parentNode.level === 3 ? parentNode.ancestryPath : "";
+    let activeL3Slug = parentNode.level === 3 ? parentNode.slug : "";
 
     for (const line of lines) {
       const trimmed = line.trim();
       if (!trimmed) continue;
 
-      // Prefix Logic
       const isL4 = trimmed.startsWith('--');
       const isL3 = !isL4 && trimmed.startsWith('-');
       const isL2 = !isL4 && !isL3 && trimmed.startsWith('+');
 
-      // Validation Rules
-      if (parentLevel === 2 && isL2) {
+      // Validation
+      if (parentNode.level === 2 && isL2) {
         results.errors.push(`Error: Cannot add L2 (+) under Subject "${parentNode.name}".`);
         continue;
       }
-      if (parentLevel === 3 && (isL2 || isL3)) {
-        results.errors.push(`Error: Can only add L4 (--) under Anchor "${parentNode.name}".`);
-        continue;
-      }
 
-      // Parse Name | Hints
       const content = trimmed.replace(/^[+\-\-]+/, '').trim();
       const [name, hintsRaw] = content.split('|').map(s => s.trim());
       const hints = hintsRaw ? hintsRaw.split(',').map(h => h.trim()) : [];
 
       const targetLevel = isL2 ? 2 : isL3 ? 3 : 4;
-      const slug = `${parentNode.slug}-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+      
+      // Calculate hierarchical slug and dot-notation path
+      let finalParentId = parentId;
+      let finalSlug = "";
+      let finalPath = "";
 
-      // Semantic Embedding String
-      const richString = `Paper: ${paper}, Subject: ${subject}, Parent: ${anchor || parentNode.name}, Topic: ${name}. Hints: ${hints.join(', ')}`;
-      const embedding = (targetLevel >= 3) ? await generateEmbedding(richString) : null;
+      if (isL4 && activeL3Id) {
+        finalParentId = activeL3Id;
+        finalSlug = `${activeL3Slug}-${slugify(name)}`;
+        finalPath = `${activeL3Path}.${slugify(name)}`;
+      } else {
+        finalSlug = `${parentNode.slug}-${slugify(name)}`;
+        finalPath = parentPath ? `${parentPath}.${slugify(name)}` : slugify(name);
+      }
 
-      // Insert or Update
+      // Generate context-aware embedding
+      const contextString = `${name} | ${hints.join(', ')}`;
+      const embedding = await generateEmbedding(contextString);
+
       const res = await client.query(`
-        INSERT INTO topics (name, slug, level, primary_parent_id, topic_type, keywords, embedding)
-        VALUES ($1, $2, $3, $4, 'canonical', $5, $6)
+        INSERT INTO topics (name, slug, level, primary_parent_id, ancestry_path, topic_type, keywords, embedding)
+        VALUES ($1, $2, $3, $4, $5, 'canonical', $6, $7)
         ON CONFLICT (slug) DO UPDATE SET 
           name = EXCLUDED.name,
           keywords = EXCLUDED.keywords,
-          embedding = COALESCE(EXCLUDED.embedding, topics.embedding)
-        RETURNING id;
-      `, [name, slug, targetLevel, isL4 ? activeL3Id : parentId, hints, embedding ? JSON.stringify(embedding) : null]);
+          ancestry_path = EXCLUDED.ancestry_path,
+          embedding = EXCLUDED.embedding
+        RETURNING id, ancestry_path, slug;
+      `, [name, finalSlug, targetLevel, finalParentId, finalPath, hints, JSON.stringify(embedding)]);
 
-      if (isL3) activeL3Id = res.rows[0].id;
+      if (isL3) {
+        activeL3Id = res.rows[0].id;
+        activeL3Path = res.rows[0].ancestry_path;
+        activeL3Slug = res.rows[0].slug;
+      }
       results.created++;
     }
 
@@ -147,9 +137,7 @@ export async function smartBulkSeed(parentId: string, rawText: string) {
   }
 }
 
-/**
- * GET INITIAL TREE (Collapsed State Support)
- */
+// ... rest of the file (getRootNodes, getChildren) remains the same
 export async function getRootNodes() {
   return await db.query.topics.findMany({
     where: eq(topics.level, 1),
@@ -157,9 +145,6 @@ export async function getRootNodes() {
   });
 }
 
-/**
- * GET CHILDREN (Lazy Loading for Tree)
- */
 export async function getChildren(parentId: string) {
   return await db.query.topics.findMany({
     where: eq(topics.primaryParentId, parentId),

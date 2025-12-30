@@ -20,6 +20,19 @@ const vector768 = customType<{ data: number[] }>({
   },
 });
 
+export const labTopics = pgTable('lab_topics', {
+  id: serial('id').primaryKey(),
+  topicName: text('topic_name').notNull(),
+  rawVector: vector768('raw_vector'),
+  pureVector: vector768('pure_vector'),
+  level: integer('level'),
+  category: text('category'),
+  pureVectorA: vector768('pure_vector_a'),
+
+  // 3. Lens B: "Bureaucracy Stripped" (e.g. Remove "Office/Appointed/Body")
+  pureVectorB: vector768('pure_vector_b'),
+});
+
 // --- 1. USERS TABLE ---
 export const userRoleEnum = pgEnum('user_role', ['user', 'admin']);
 
