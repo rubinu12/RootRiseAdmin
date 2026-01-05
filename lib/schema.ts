@@ -58,13 +58,28 @@ export const topics = pgTable('topics', {
   id: uuid('id').defaultRandom().primaryKey(),
   name: text('name').notNull(),
   slug: text('slug').notNull().unique(),
-  level: integer('level'), 
-  topicType: text('topic_type'), // 'canonical' | 'provisional'
+  
+  // Hierarchy
+  level: integer('level'), // 1=Subject, 2=Anchor, 3=Detailed
+  topicType: text('topic_type').default('canonical'), // 'canonical' | 'provisional'
   primaryParentId: uuid('primary_parent_id'),
-  ancestryPath: text('ancestry_path'),
+  ancestryPath: text('ancestry_path'), // e.g., "Polity/State Executive/Governor"
+  
+  // 🧠 THE SCALPEL ENGINES 🧠
+  // 1. Definition String: For manual overrides (e.g., "Judiciary | Legislature")
+  definitionString: text('definition_string'),
+  
+  // 2. Dual Vectors
+  // rawVector: The standard AI output for "Judiciary" (Blurry)
+  rawVector: vector768('raw_vector'), 
+  
+  // pureVector: The subtracted version: Vector(Judiciary) - Vector(Indian Polity) (Sharp)
+  pureVector: vector768('pure_vector'),
+  sharpVector: vector768('sharp_vector'),
+
   isNavigable: boolean('is_navigable').default(true),
-  keywords: text('keywords').array(), // Enabled for semantic richness
-  embedding: vector768('embedding'), // Gemini 768-dimension vector
+  keywords: text('keywords').array(),
+  
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
 });
@@ -73,24 +88,33 @@ export const topicsRelations = relations(topics, ({ many }) => ({
   questionMappings: many(prelimQuestionTopics),
 }));
 
-// --- 3. PRELIM QUESTIONS (Parent) ---
+// --- 3. PRELIM QUESTIONS (Added Vector for future Mains/Reverse Search) ---
 export const prelimQuestions = pgTable('prelim_questions', {
   id: bigint('id', { mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
   paper: varchar('paper', { length: 10 }),
   year: integer('year'),
   source: varchar('source', { length: 20 }),
-  questionType: varchar('question_type', { length: 20 }), // 'MCQ', 'STATEMENT', 'PAIR'
+  questionType: varchar('question_type', { length: 20 }),
+  
   questionText: text('question_text'),
+  // ... (keep options A-D as you have them) ...
   optionA: text('option_a'),
   optionB: text('option_b'),
   optionC: text('option_c'),
   optionD: text('option_d'),
   correctOption: char('correct_option', { length: 1 }),
+  
   weightage: varchar('weightage', { length: 10 }).default('MEDIUM'),
   complexity: real('complexity').default(0.0),
+  
+  // ADDED: To search questions directly later (Reverse RAG)
+  rawVector: vector768('raw_vector'),
+
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
 });
+
+
 
 export const prelimQuestionsRelations = relations(prelimQuestions, ({ many }) => ({
   statements: many(prelimQuestionStatements),
