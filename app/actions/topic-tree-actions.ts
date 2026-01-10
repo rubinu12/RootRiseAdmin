@@ -17,7 +17,7 @@ const predictionServiceClient = new v1.PredictionServiceClient(clientOptions);
 // --- 1. HELPERS ---
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-async function generateEmbedding(text: string, retryCount = 0): Promise<number[]> {
+export async function generateEmbedding(text: string, retryCount = 0): Promise<number[]> {
   if (!PROJECT_ID) throw new Error("GOOGLE_PROJECT_ID is missing.");
   
   const endpoint = `projects/${PROJECT_ID}/locations/${LOCATION}/publishers/google/models/${MODEL_NAME}`;
@@ -72,12 +72,14 @@ const rejectVector = (a: number[], b: number[]) => {
   return a.map((val, i) => val - (scalar * b[i]));
 };
 
-const slugify = (text: string) => text.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+export async  function slugify(text: string) {
+  return text.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+};
 
 // --- 2. CREATE ROOT (L1) ---
 export async function createRootTopic(name: string) {
   try {
-    const slug = slugify(name);
+    const slug = await slugify(name);
     await db.insert(topics).values({
       name: name,
       slug: slug,
